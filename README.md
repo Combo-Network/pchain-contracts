@@ -1,19 +1,33 @@
 # pchain-contracts
 
 1. 部署合约，获得合约地址：
+
 ApostleBase.sol
+
 ApostleClockAuction.sol
+
 ApostleSettingIds.sol
+
 Gen0Apostle.sol
+
 ObjectOwnership.sol
+
 InterstellarEncoder.sol
+
 SettingsRegistry.sol
+
 ApostleBaseProxy（OwnedUpgradeabilityProxy）
+
 ApostleClockAuctionProxy（OwnedUpgradeabilityProxy）
+
 Gen0ApostleProxy（OwnedUpgradeabilityProxy）
+
 ObjectOwnershipProxy（OwnedUpgradeabilityProxy）
+
 ObjectOwnershipAuthority.sol(使用ApostleBaseProxy初始化)
+
 ApostleBaseAuthority.sol(使用Gen0ApostleProxy初始化)
+
 ClockAuctionAuthority.sol(使用Gen0ApostleProxy初始化)
 
 2. 设置proxy
