@@ -1,14 +1,15 @@
 pragma solidity ^0.4.24;
 
-import "../common/contracts/interfaces/ISettingsRegistry.sol";
-import "../common/contracts/interfaces/IActivity.sol";
-import "../common/contracts/interfaces/IActivityObject.sol";
-import "../common/contracts/interfaces/IObjectOwnership.sol";
-import "../common/contracts/PausableDSAuth.sol";
-import "../common/contracts/SupportsInterfaceWithLookup"
+import "../common/ERC721.sol";
+import "../common/interfaces/ISettingsRegistry.sol";
+import "../common/interfaces/IActivityObject.sol";
+import "../common/interfaces/IObjectOwnership.sol";
+import "../common/PausableDSAuth.sol";
+import "../common/SupportsInterfaceWithLookup.sol";
 import "./ApostleSettingIds.sol";
+import "./interfaces/IGeneScience.sol";
 
-contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject, PausableDSAuth{
+contract ApostleBase is SupportsInterfaceWithLookup, IActivityObject, PausableDSAuth, ApostleSettingIds{
 
     event Birth(
         address indexed owner, uint256 apostleTokenId, uint256 matronId, uint256 sireId, uint256 genes, uint256 talents, uint256 coolDownIndex, uint256 generation, uint256 birthTime
@@ -16,6 +17,13 @@ contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject,
     event Pregnant(
         uint256 matronId,uint256 matronCoolDownEndTime, uint256 matronCoolDownIndex, uint256 sireId, uint256 sireCoolDownEndTime, uint256 sireCoolDownIndex
     );
+    
+    /// @dev The AutoBirth event is fired when a cat becomes pregant via the breedWithAuto()
+    ///  function. This is used to notify the auto-birth daemon that this breeding action
+    ///  included a pre-payment of the gas required to call the giveBirth() function.
+    event AutoBirth(uint256 matronId, uint256 cooldownEndTime);
+
+    event Unbox(uint256 tokenId, uint256 activeTime);
 
     struct Apostle {
         // An apostles genes never change.
@@ -91,7 +99,6 @@ contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject,
 
         registry = ISettingsRegistry(_registry);
 
-        _registerInterface(InterfaceId_IActivity);
         _registerInterface(InterfaceId_IActivityObject);
         _updateCoolDown();
 
@@ -151,15 +158,13 @@ contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject,
     {
         require(tokenId2Apostle[_apostleId].birthTime > 0, "Apostle should exist");
 
-        require(ITokenUse(registry.addressOf(CONTRACT_TOKEN_USE)).isObjectReadyToUse(_apostleId), "Object ready to do activity");
-
         // In addition to checking the cooldownEndTime, we also need to check to see if
         // the cat has a pending birth; there can be some period of time between the end
         // of the pregnacy timer and the birth event.
         return (tokenId2Apostle[_apostleId].siringWithId == 0) && (tokenId2Apostle[_apostleId].cooldownEndTime <= now);
     }
 
-        function approveSiring(address _addr, uint256 _sireId)
+    function approveSiring(address _addr, uint256 _sireId)
     public
     whenNotPaused
     {
@@ -193,11 +198,12 @@ contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject,
             aps.cooldownIndex += 1;
         }
 
-        // address(0) meaning use by its owner or whitelisted contract
-        ITokenUse(registry.addressOf(SettingIds.CONTRACT_TOKEN_USE)).addActivity(_tokenId, address(0), aps.cooldownEndTime);
-
         return uint256(aps.cooldownEndTime);
 
+    }
+    
+    function _isReadyToGiveBirth(Apostle storage _matron) private view returns (bool) {
+        return (_matron.siringWithId != 0) && (_matron.cooldownEndTime <= now);
     }
 
     /// @dev Internal check to see if a given sire and matron are a valid mating pair. DOES NOT
@@ -342,56 +348,15 @@ contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject,
         return true;
     }
 
-    function tokenFallback(address _from, uint256 _value, bytes _data) public {
+    function breed(uint256 matronId, uint256 sireId) payable public {
         uint256 autoBirthFee = registry.uintOf(ApostleSettingIds.UINT_AUTOBIRTH_FEE);
 
-        uint matronId;
-        uint sireId;
-        uint level;
+        require(msg.value >= autoBirthFee, 'not enough to breed.');
+        registry.addressOf(CONTRACT_REVENUE_POOL).transfer(msg.value);
 
-        if (msg.sender == registry.addressOf(CONTRACT_RING_ERC20_TOKEN)) {
-            require(_value >= autoBirthFee, 'not enough to breed.');
-            ERC223(msg.sender).transfer(registry.addressOf(CONTRACT_REVENUE_POOL), _value, toBytes(_from));
-
-            assembly {
-                let ptr := mload(0x40)
-                calldatacopy(ptr, 0, calldatasize)
-                matronId := mload(add(ptr, 132))
-                sireId := mload(add(ptr, 164))
-            }
-
-            // All checks passed, apostle gets pregnant!
-            _breedWith(matronId, sireId);
-            emit AutoBirth(matronId, uint48(tokenId2Apostle[matronId].cooldownEndTime));
-
-        } else if (isValidResourceToken(msg.sender)){
-
-            assembly {
-                let ptr := mload(0x40)
-                calldatacopy(ptr, 0, calldatasize)
-                matronId := mload(add(ptr, 132))
-                level := mload(add(ptr, 164))
-            }
-
-            require(level > 0 && _value >= level * registry.uintOf(UINT_MIX_TALENT), 'resource for mixing is not enough.');
-
-            sireId = tokenId2Apostle[matronId].siringWithId;
-
-            // TODO: msg.sender must be valid resource tokens, this is now checked in the implement of IGeneScience.
-            // better to check add a API in IGeneScience for checking valid msg.sender is one of the resource.
-            require(_payAndMix(matronId, sireId, msg.sender, level));
-
-        }
-
-    }
-
-    /// Anyone can try to kill this Apostle;
-    function killApostle(uint256 _tokenId) public {
-        require(tokenId2Apostle[_tokenId].activeTime > 0);
-        require(defaultLifeTime(_tokenId) < now);
-
-        address habergPotionShop = registry.addressOf(CONTRACT_HABERG_POTION_SHOP);
-        IHabergPotionShop(habergPotionShop).tryKillApostle(_tokenId, msg.sender);
+        // All checks passed, apostle gets pregnant!
+        _breedWith(matronId, sireId);
+        emit AutoBirth(matronId, uint48(tokenId2Apostle[matronId].cooldownEndTime));
     }
 
     function isDead(uint256 _tokenId) public view returns (bool) {
@@ -427,11 +392,6 @@ contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject,
     }
 
     function activityRemoved(uint256 _tokenId, address _activity, address _user) auth public {
-        // do nothing.
-    }
-
-    /// IActivity
-    function activityStopped(uint256 _tokenId) auth public {
         // do nothing.
     }
 
@@ -471,5 +431,21 @@ contract ApostleBase is SupportsInterfaceWithLookup, IActivity, IActivityObject,
         cooldowns[11] =  uint32(2 days);
         cooldowns[12] =  uint32(4 days);
         cooldowns[13] =  uint32(7 days);
+    }
+    
+    function updateGenesAndTalents(uint256 _tokenId, uint256 _genes, uint256 _talents) public auth {
+        Apostle storage aps = tokenId2Apostle[_tokenId];
+        aps.genes = _genes;
+        aps.talents = _talents;
+    }
+
+    function batchUpdate(uint256[] _tokenIds, uint256[] _genesList, uint256[] _talentsList) public auth {
+        require(_tokenIds.length == _genesList.length && _tokenIds.length == _talentsList.length);
+        for(uint i = 0; i < _tokenIds.length; i++) {
+            Apostle storage aps = tokenId2Apostle[_tokenIds[i]];
+            aps.genes = _genesList[i];
+            aps.talents = _talentsList[i];
+        }
+
     }
 }

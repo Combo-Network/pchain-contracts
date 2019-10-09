@@ -6,10 +6,8 @@ import "./interfaces/IInterstellarEncoder.sol";
 import "./interfaces/ISettingsRegistry.sol";
 import "./DSAuth.sol";
 import "./SettingIds.sol";
-import "./StringUtil.sol";
 
 contract ObjectOwnership is ERC721Token("Evolution Land Objects","EVO"), DSAuth, SettingIds {
-    using StringUtil for *;
 
     ISettingsRegistry public registry;
 
@@ -23,9 +21,6 @@ contract ObjectOwnership is ERC721Token("Evolution Land Objects","EVO"), DSAuth,
         _;
         singletonLock = true;
     }
-
-    // https://docs.opensea.io/docs/2-adding-metadata
-    string public baseTokenURI;
 
     /**
      * @dev Atlantis's constructor 
@@ -57,22 +52,6 @@ contract ObjectOwnership is ERC721Token("Evolution Land Objects","EVO"), DSAuth,
         _registerInterface(InterfaceId_ERC721Metadata);
 
         registry = ISettingsRegistry(_registry);
-    }
-
-    function tokenURI(uint256 _tokenId) public view returns (string) {
-        if (super.tokenURI(_tokenId).toSlice().empty()) {
-            return baseTokenURI.toSlice().concat(StringUtil.uint2str(_tokenId).toSlice());
-        }
-
-        return super.tokenURI(_tokenId);
-    }
-
-    function setTokenURI(uint256 _tokenId, string _uri) public auth {
-        _setTokenURI(_tokenId, _uri);
-    }
-
-    function setBaseTokenURI(string _newBaseTokenURI) public auth  {
-        baseTokenURI = _newBaseTokenURI;
     }
 
     function mintObject(address _to, uint128 _objectId) public auth returns (uint256 _tokenId) {

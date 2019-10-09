@@ -1,5 +1,5 @@
 pragma solidity ^0.4.24;
-import "../common/contracts/SettingIds.sol";
+import "../common/SettingIds.sol";
 
 contract ApostleSettingIds is SettingIds {
 
